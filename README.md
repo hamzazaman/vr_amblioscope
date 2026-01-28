@@ -2,7 +2,7 @@
 
 Babylon.js WebXR amblyoscope/synoptophore demo that renders separate images per eye with browser-side controls.
 
-Live demo: https://hamzazaman.github.io/vr_amblioscope/
+Live demo: https://hamzazaman.github.io/vr_amblyoscope/
 
 ## Features
 - Per-eye image planes with independent position/rotation
