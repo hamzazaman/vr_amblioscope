@@ -14,7 +14,7 @@ import {
   Viewport,
   WebXRState,
 } from '@babylonjs/core'
-import type { Camera, Nullable, Observer } from '@babylonjs/core'
+import type { Camera, Nullable, Observer, WebXRInputSource } from '@babylonjs/core'
 import '@babylonjs/loaders'
 
 type AxisGroup = {
@@ -87,6 +87,7 @@ let headLockedInXr = false
 let showBothEyesInXr = false
 let inXrSession = false
 let beforeCameraObserver: Nullable<Observer<Camera>> = null
+const controllerMap = new Map<'left' | 'right', WebXRInputSource>()
 
 const leftMaterial = new StandardMaterial('leftMaterial', scene)
 const rightMaterial = new StandardMaterial('rightMaterial', scene)
@@ -129,6 +130,7 @@ engine.runRenderLoop(() => {
     leftPreviewCamera.rotation.copyFrom(camera.rotation)
     rightPreviewCamera.rotation.copyFrom(camera.rotation)
   }
+  updateJoystickMovement()
   scene.render()
 })
 
@@ -145,6 +147,18 @@ scene
   })
   .then((xrHelper) => {
     attachXRButtons(xrHelper)
+
+    xrHelper.input.onControllerAddedObservable.add((xrController) => {
+      const handedness = xrController.inputSource.handedness
+      if (handedness !== 'left' && handedness !== 'right') return
+      controllerMap.set(handedness, xrController)
+    })
+
+    xrHelper.input.onControllerRemovedObservable.add((xrController) => {
+      const handedness = xrController.inputSource.handedness
+      if (handedness !== 'left' && handedness !== 'right') return
+      controllerMap.delete(handedness)
+    })
 
     onXrDebugChange((nextHeadLocked, nextShowBoth) => {
       headLockedInXr = nextHeadLocked
@@ -513,6 +527,99 @@ function disablePerEyeVisibility() {
   beforeCameraObserver = null
 }
 
+function updateJoystickMovement() {
+  if (!inXrSession || headLockedInXr) return
+  const deltaSeconds = engine.getDeltaTime() / 1000
+  const speed = 0.6
+  const rotSpeed = 1.6
+
+  const leftSource = controllerMap.get('left')
+  const rightSource = controllerMap.get('right')
+
+  if (leftSource) {
+    const leftMotion = leftSource.motionController
+    const xButton = leftMotion?.getComponent('x-button')
+    const yButton = leftMotion?.getComponent('y-button')
+
+    if (xButton?.pressed) {
+      leftState.rotation.z -= rotSpeed * deltaSeconds
+      applyState(leftPlane, leftState)
+    }
+    if (yButton?.pressed) {
+      leftState.rotation.z += rotSpeed * deltaSeconds
+      applyState(leftPlane, leftState)
+    }
+  }
+
+  if (leftSource?.inputSource.gamepad) {
+    const { x, y } = getStickAxes(leftSource.inputSource.gamepad.axes)
+    if (Math.abs(x) > 0.05 || Math.abs(y) > 0.05) {
+      leftState.position.x += x * speed * deltaSeconds
+      leftState.position.y += -y * speed * deltaSeconds
+      applyState(leftPlane, leftState)
+    }
+
+    const leftButtons = leftSource.inputSource.gamepad.buttons
+    if (isPressedAny(leftButtons, [2, 0])) {
+      leftState.rotation.z -= rotSpeed * deltaSeconds
+      applyState(leftPlane, leftState)
+    }
+    if (isPressedAny(leftButtons, [3, 1])) {
+      leftState.rotation.z += rotSpeed * deltaSeconds
+      applyState(leftPlane, leftState)
+    }
+  }
+
+  if (rightSource) {
+    const rightMotion = rightSource.motionController
+    const aButton = rightMotion?.getComponent('a-button')
+    const bButton = rightMotion?.getComponent('b-button')
+
+    if (aButton?.pressed) {
+      rightState.rotation.z -= rotSpeed * deltaSeconds
+      applyState(rightPlane, rightState)
+    }
+    if (bButton?.pressed) {
+      rightState.rotation.z += rotSpeed * deltaSeconds
+      applyState(rightPlane, rightState)
+    }
+  }
+
+  if (rightSource?.inputSource.gamepad) {
+    const { x, y } = getStickAxes(rightSource.inputSource.gamepad.axes)
+    if (Math.abs(x) > 0.05 || Math.abs(y) > 0.05) {
+      rightState.position.x += x * speed * deltaSeconds
+      rightState.position.y += -y * speed * deltaSeconds
+      applyState(rightPlane, rightState)
+    }
+
+    const rightButtons = rightSource.inputSource.gamepad.buttons
+    if (isPressedAny(rightButtons, [0, 2])) {
+      rightState.rotation.z -= rotSpeed * deltaSeconds
+      applyState(rightPlane, rightState)
+    }
+    if (isPressedAny(rightButtons, [1, 3])) {
+      rightState.rotation.z += rotSpeed * deltaSeconds
+      applyState(rightPlane, rightState)
+    }
+  }
+}
+
+function getStickAxes(axes: readonly number[]) {
+  if (axes.length >= 4) {
+    return { x: axes[2] ?? 0, y: axes[3] ?? 0 }
+  }
+  return { x: axes[0] ?? 0, y: axes[1] ?? 0 }
+}
+
+function isPressedAny(buttons: readonly GamepadButton[], indices: number[]) {
+  return indices.some((index) => {
+    const button = buttons[index]
+    if (!button) return false
+    return button.pressed || button.value > 0.5
+  })
+}
+
 function updatePreviewViewports() {
   const width = engine.getRenderWidth()
   const height = engine.getRenderHeight()
@@ -568,25 +675,6 @@ function buildControls(
   controls.push(
     createRangeControl(panel, 'Pos Y', 0.5, 2.5, 0.01, state.position.y, (value) => {
       state.position.y = value
-      onChange(state)
-    }),
-  )
-  controls.push(
-    createRangeControl(panel, 'Pos Z', -4, 4, 0.01, state.position.z, (value) => {
-      state.position.z = value
-      onChange(state)
-    }),
-  )
-
-  controls.push(
-    createRangeControl(panel, 'Rot X', -45, 45, 0.5, toDegrees(state.rotation.x), (value) => {
-      state.rotation.x = toRadians(value)
-      onChange(state)
-    }),
-  )
-  controls.push(
-    createRangeControl(panel, 'Rot Y', -45, 45, 0.5, toDegrees(state.rotation.y), (value) => {
-      state.rotation.y = toRadians(value)
       onChange(state)
     }),
   )
@@ -667,9 +755,6 @@ function createRangeControl(
     getInitial: (state: ImageState) => {
       if (label === 'Pos X') return state.position.x
       if (label === 'Pos Y') return state.position.y
-      if (label === 'Pos Z') return state.position.z
-      if (label === 'Rot X') return toDegrees(state.rotation.x)
-      if (label === 'Rot Y') return toDegrees(state.rotation.y)
       return toDegrees(state.rotation.z)
     },
   }
