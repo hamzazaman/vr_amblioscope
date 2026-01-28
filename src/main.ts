@@ -12,9 +12,11 @@ import {
   UniversalCamera,
   Vector3,
   Viewport,
+  WebXRControllerPointerSelection,
   WebXRState,
 } from '@babylonjs/core'
 import type { Camera, Nullable, Observer, WebXRInputSource } from '@babylonjs/core'
+import { AdvancedDynamicTexture, Control, Rectangle, TextBlock } from '@babylonjs/gui'
 import '@babylonjs/loaders'
 
 type AxisGroup = {
@@ -79,6 +81,30 @@ const rightPlane = MeshBuilder.CreatePlane('rightPlane', { size: 0.6 }, scene)
 leftPlane.layerMask = leftMask
 rightPlane.layerMask = rightMask
 
+const hudPlane = MeshBuilder.CreatePlane('xrHud', { width: 1.4, height: 0.36 }, scene)
+hudPlane.layerMask = commonMask
+hudPlane.isVisible = false
+
+const hudTexture = AdvancedDynamicTexture.CreateForMesh(hudPlane, 1024, 256, false)
+const hudBackground = new Rectangle('hudBackground')
+hudBackground.width = 1
+hudBackground.height = 1
+hudBackground.cornerRadius = 12
+hudBackground.thickness = 2
+hudBackground.color = 'rgba(255,255,255,0.35)'
+hudBackground.background = 'rgba(10,14,20,0.65)'
+hudTexture.addControl(hudBackground)
+
+const hudText = new TextBlock('hudText')
+hudText.color = '#f4f6f8'
+hudText.fontSize = 28
+hudText.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_LEFT
+hudText.textVerticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER
+hudText.paddingLeft = '18px'
+hudText.paddingRight = '18px'
+hudText.text = ''
+hudBackground.addControl(hudText)
+
 const leftState = cloneState(defaultLeft)
 const rightState = cloneState(defaultRight)
 
@@ -88,6 +114,7 @@ let inXrSession = false
 let beforeCameraObserver: Nullable<Observer<Camera>> = null
 let xrRigCameras: Camera[] = []
 let lastControlSyncMs = 0
+let showControllers = false
 const controllerMap = new Map<'left' | 'right', WebXRInputSource>()
 
 const leftMaterial = new StandardMaterial('leftMaterial', scene)
@@ -116,6 +143,7 @@ const {
   onXrDebugChange,
   onRecenterXr,
   syncControls,
+  onControllerVisibilityChange,
 } = buildUI(uiRoot)
 setStatus(engine.webGLVersion === 2 ? 'WebGL2 ready.' : 'WebGL2 not detected.')
 
@@ -132,6 +160,7 @@ engine.runRenderLoop(() => {
     rightPreviewCamera.rotation.copyFrom(camera.rotation)
   }
   updateJoystickMovement()
+  updateXrHud()
   scene.render()
 })
 
@@ -143,16 +172,31 @@ window.addEventListener('resize', () => {
 scene
   .createDefaultXRExperienceAsync({
     disableDefaultUI: true,
+    disablePointerSelection: true,
+    disableNearInteraction: true,
     disableTeleportation: true,
     optionalFeatures: true,
   })
   .then((xrHelper) => {
     attachXRButtons(xrHelper)
 
+    if (xrHelper.pointerSelection) {
+      xrHelper.pointerSelection.displayLaserPointer = false
+      xrHelper.pointerSelection.displaySelectionMesh = false
+    }
+
+    xrHelper.baseExperience.featuresManager.disableFeature(WebXRControllerPointerSelection.Name)
+
     xrHelper.input.onControllerAddedObservable.add((xrController) => {
       const handedness = xrController.inputSource.handedness
       if (handedness !== 'left' && handedness !== 'right') return
       controllerMap.set(handedness, xrController)
+
+      updateSingleControllerVisibility(xrController)
+
+      xrController.onMotionControllerInitObservable.add(() => {
+        updateSingleControllerVisibility(xrController)
+      })
     })
 
     xrHelper.input.onControllerRemovedObservable.add((xrController) => {
@@ -171,6 +215,11 @@ scene
         resetHeadLockedPlanes()
         syncControls()
       }
+    })
+
+    onControllerVisibilityChange((visible) => {
+      showControllers = visible
+      updateControllerVisibility()
     })
 
     xrHelper.baseExperience.onStateChangedObservable.add((state) => {
@@ -333,9 +382,17 @@ function buildUI(root: HTMLDivElement) {
   let showBoth = false
   const debugListeners: Array<(showBoth: boolean) => void> = []
 
+  let controllersVisible = false
+  const controllerListeners: Array<(visible: boolean) => void> = []
+
   createToggleControl(debugPanel, 'Show both eyes', showBoth, (next) => {
     showBoth = next
     debugListeners.forEach((handler) => handler(showBoth))
+  })
+
+  createToggleControl(debugPanel, 'Show controllers', controllersVisible, (next) => {
+    controllersVisible = next
+    controllerListeners.forEach((handler) => handler(controllersVisible))
   })
 
   const recenterRow = document.createElement('div')
@@ -363,6 +420,10 @@ function buildUI(root: HTMLDivElement) {
     },
     onRecenterXr: (handler: () => void) => {
       recenterListeners.push(handler)
+    },
+    onControllerVisibilityChange: (handler: (visible: boolean) => void) => {
+      controllerListeners.push(handler)
+      handler(controllersVisible)
     },
     syncControls: () => {
       leftBindings.sync(leftState)
@@ -425,9 +486,11 @@ function applyXrOverrides(inXr: boolean) {
     rightPlane.layerMask = rightMask
     leftPlane.isVisible = true
     rightPlane.isVisible = true
+    hudPlane.isVisible = false
     disablePerEyeVisibility()
     leftPlane.parent = camera
     rightPlane.parent = camera
+    hudPlane.parent = null
     applyState(leftPlane, leftState)
     applyState(rightPlane, rightState)
     return
@@ -443,6 +506,12 @@ function applyXrOverrides(inXr: boolean) {
   } else if (xrCamera) {
     leftPlane.parent = xrCamera
     rightPlane.parent = xrCamera
+  }
+
+  if (xrCamera) {
+    hudPlane.parent = xrCamera
+    hudPlane.position.set(0, -0.8, 2.2)
+    hudPlane.isVisible = true
   }
 
   applyState(leftPlane, leftState)
@@ -595,12 +664,39 @@ function getStickAxes(axes: readonly number[]) {
   return { x: axes[0] ?? 0, y: axes[1] ?? 0 }
 }
 
+function updateXrHud() {
+  if (!inXrSession || !hudPlane.isVisible) return
+  const left = formatState(leftState)
+  const right = formatState(rightState)
+  hudText.text = `Left  ${left}\nRight ${right}`
+}
+
+function formatState(state: ImageState) {
+  const x = state.position.x.toFixed(2)
+  const y = state.position.y.toFixed(2)
+  const rot = toDegrees(state.rotation.z).toFixed(1)
+  return `X ${x}  Y ${y}  RZ ${rot}°`
+}
+
 function isPressedAny(buttons: readonly GamepadButton[], indices: number[]) {
   return indices.some((index) => {
     const button = buttons[index]
     if (!button) return false
     return button.pressed || button.value > 0.5
   })
+}
+
+function updateControllerVisibility() {
+  controllerMap.forEach((controller) => {
+    updateSingleControllerVisibility(controller)
+  })
+}
+
+function updateSingleControllerVisibility(controller: WebXRInputSource) {
+  const enabled = showControllers
+  controller.pointer?.setEnabled(enabled)
+  controller.grip?.setEnabled(enabled)
+  controller.motionController?.rootMesh?.setEnabled(enabled)
 }
 
 function updatePreviewViewports() {
