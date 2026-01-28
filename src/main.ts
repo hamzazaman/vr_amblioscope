@@ -12,7 +12,7 @@ import {
   UniversalCamera,
   Vector3,
   Viewport,
-  WebXRControllerPointerSelection,
+  WebXRFeatureName,
   WebXRState,
 } from '@babylonjs/core'
 import type { Camera, Nullable, Observer, WebXRInputSource } from '@babylonjs/core'
@@ -73,6 +73,23 @@ const rightPreviewCamera = new UniversalCamera('rightPreview', camera.position.c
 leftPreviewCamera.layerMask = leftMask | commonMask
 rightPreviewCamera.layerMask = rightMask | commonMask
 
+const previewLabels = createPreviewLabels()
+
+function createPreviewLabels() {
+  const container = document.createElement('div')
+  container.id = 'preview-labels'
+  container.innerHTML = `
+    <div class="preview-label preview-label-left">LEFT</div>
+    <div class="preview-label preview-label-right">RIGHT</div>
+  `
+  document.body.appendChild(container)
+  return {
+    container,
+    left: container.querySelector('.preview-label-left') as HTMLDivElement,
+    right: container.querySelector('.preview-label-right') as HTMLDivElement,
+  }
+}
+
 const light = new HemisphericLight('light', new Vector3(0, 1, 0), scene)
 light.intensity = 0.85
 
@@ -80,6 +97,8 @@ const leftPlane = MeshBuilder.CreatePlane('leftPlane', { size: 0.6 }, scene)
 const rightPlane = MeshBuilder.CreatePlane('rightPlane', { size: 0.6 }, scene)
 leftPlane.layerMask = leftMask
 rightPlane.layerMask = rightMask
+leftPlane.parent = camera
+rightPlane.parent = camera
 
 const hudPlane = MeshBuilder.CreatePlane('xrHud', { width: 1.4, height: 0.36 }, scene)
 hudPlane.layerMask = commonMask
@@ -109,7 +128,6 @@ const leftState = cloneState(defaultLeft)
 const rightState = cloneState(defaultRight)
 
 let xrCamera: Nullable<Camera> = null
-let showBothEyesInXr = false
 let inXrSession = false
 let beforeCameraObserver: Nullable<Observer<Camera>> = null
 let xrRigCameras: Camera[] = []
@@ -140,7 +158,6 @@ const {
   setStatus,
   attachXRButtons,
   setPreviewEnabled,
-  onXrDebugChange,
   onRecenterXr,
   syncControls,
   onControllerVisibilityChange,
@@ -185,7 +202,16 @@ scene
       xrHelper.pointerSelection.displaySelectionMesh = false
     }
 
-    xrHelper.baseExperience.featuresManager.disableFeature(WebXRControllerPointerSelection.Name)
+    // Disable all XR features that might create visual artifacts
+    xrHelper.baseExperience.featuresManager.disableFeature(WebXRFeatureName.POINTER_SELECTION)
+    xrHelper.baseExperience.featuresManager.disableFeature(WebXRFeatureName.TELEPORTATION)
+    xrHelper.baseExperience.featuresManager.disableFeature(WebXRFeatureName.ANCHOR_SYSTEM)
+    xrHelper.baseExperience.featuresManager.disableFeature(WebXRFeatureName.HAND_TRACKING)
+
+    // Dispose of any teleportation meshes that may have been created
+    if (xrHelper.teleportation) {
+      xrHelper.teleportation.dispose()
+    }
 
     xrHelper.input.onControllerAddedObservable.add((xrController) => {
       const handedness = xrController.inputSource.handedness
@@ -203,11 +229,6 @@ scene
       const handedness = xrController.inputSource.handedness
       if (handedness !== 'left' && handedness !== 'right') return
       controllerMap.delete(handedness)
-    })
-
-    onXrDebugChange((nextShowBoth) => {
-      showBothEyesInXr = nextShowBoth
-      applyXrOverrides(xrHelper.baseExperience.state === WebXRState.IN_XR)
     })
 
     onRecenterXr(() => {
@@ -237,6 +258,7 @@ scene
         previewEnabled = false
         scene.activeCameras = null
         setPreviewEnabled(previewEnabled)
+        previewLabels.container.style.display = 'none'
         leftMaterial.alpha = 1
         rightMaterial.alpha = 1
         applyXrOverrides(true)
@@ -252,6 +274,7 @@ scene
         previewEnabled = true
         scene.activeCameras = [camera, leftPreviewCamera, rightPreviewCamera]
         setPreviewEnabled(previewEnabled)
+        previewLabels.container.style.display = 'block'
         leftMaterial.alpha = 0.5
         rightMaterial.alpha = 0.5
         setStatus('XR session ended.')
@@ -379,16 +402,8 @@ function buildUI(root: HTMLDivElement) {
   debugPanel.className = 'panel'
   root.appendChild(debugPanel)
 
-  let showBoth = false
-  const debugListeners: Array<(showBoth: boolean) => void> = []
-
   let controllersVisible = false
   const controllerListeners: Array<(visible: boolean) => void> = []
-
-  createToggleControl(debugPanel, 'Show both eyes', showBoth, (next) => {
-    showBoth = next
-    debugListeners.forEach((handler) => handler(showBoth))
-  })
 
   createToggleControl(debugPanel, 'Show controllers', controllersVisible, (next) => {
     controllersVisible = next
@@ -413,10 +428,6 @@ function buildUI(root: HTMLDivElement) {
     },
     setPreviewEnabled: (enabled: boolean) => {
       previewStatus.textContent = `Desktop eye preview: ${enabled ? 'enabled' : 'disabled'}`
-    },
-    onXrDebugChange: (handler: (showBoth: boolean) => void) => {
-      debugListeners.push(handler)
-      handler(showBoth)
     },
     onRecenterXr: (handler: () => void) => {
       recenterListeners.push(handler)
@@ -531,11 +542,6 @@ function enablePerEyeVisibility() {
   if (beforeCameraObserver) return
   beforeCameraObserver = scene.onBeforeCameraRenderObservable.add((renderCamera) => {
     if (!inXrSession) return
-    if (showBothEyesInXr) {
-      leftPlane.isVisible = true
-      rightPlane.isVisible = true
-      return
-    }
 
     if (renderCamera.isLeftCamera) {
       leftPlane.isVisible = true
@@ -704,25 +710,44 @@ function updatePreviewViewports() {
   const height = engine.getRenderHeight()
   const aspect = width / height
 
-  const panelWidth = Math.min(0.28, 0.32 * (1 / aspect))
+  const panelWidth = Math.min(0.2, 0.24 * (1 / aspect))
   const panelHeight = panelWidth * 0.75
-  const margin = 0.02
-  const right = 1 - margin
+  const margin = 0.015
+  const gap = 0.01
+  const top = 1 - margin - panelHeight
 
+  // Left preview on left, right preview on right
   leftPreviewCamera.viewport = new Viewport(
-    right - panelWidth,
-    1 - margin - panelHeight,
+    1 - margin - panelWidth * 2 - gap,
+    top,
     panelWidth,
     panelHeight,
   )
   rightPreviewCamera.viewport = new Viewport(
-    right - panelWidth,
-    1 - margin - panelHeight * 2 - margin,
+    1 - margin - panelWidth,
+    top,
     panelWidth,
     panelHeight,
   )
 
   camera.viewport = new Viewport(0, 0, 1, 1)
+
+  // Update label positions to match viewports
+  const leftX = (1 - margin - panelWidth * 2 - gap) * width
+  const rightX = (1 - margin - panelWidth) * width
+  const labelTop = margin * height
+  const labelWidth = panelWidth * width
+  const labelHeight = panelHeight * height
+
+  previewLabels.left.style.left = `${leftX}px`
+  previewLabels.left.style.top = `${labelTop}px`
+  previewLabels.left.style.width = `${labelWidth}px`
+  previewLabels.left.style.height = `${labelHeight}px`
+
+  previewLabels.right.style.left = `${rightX}px`
+  previewLabels.right.style.top = `${labelTop}px`
+  previewLabels.right.style.width = `${labelWidth}px`
+  previewLabels.right.style.height = `${labelHeight}px`
 }
 
 function createPanel(root: HTMLElement, title: string) {

@@ -119,6 +119,33 @@ button:active {
   line-height: 1.4;
 }
 
+.preview-label {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-radius: 6px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.preview-label-left {
+  border-color: #3ee78b;
+  color: #3ee78b;
+}
+
+.preview-label-right {
+  border-color: #ffb347;
+  color: #ffb347;
+}
+
 @media (max-width: 640px) {
   #ui {
     left: 8px;
@@ -128,5 +155,9 @@ button:active {
 
   .control-row {
     grid-template-columns: 64px 1fr 48px;
+  }
+
+  .preview-label {
+    font-size: 9px;
   }
 }
