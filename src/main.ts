@@ -11,8 +11,10 @@ import {
   StandardMaterial,
   UniversalCamera,
   Vector3,
+  Viewport,
   WebXRState,
 } from '@babylonjs/core'
+import type { Camera, Nullable } from '@babylonjs/core'
 import '@babylonjs/loaders'
 
 type AxisGroup = {
@@ -31,12 +33,12 @@ const rightMask = 0x20000000
 const commonMask = 0x0fffffff
 
 const defaultLeft: ImageState = {
-  position: { x: 0, y: 1.6, z: 2.0 },
+  position: { x: 0, y: 1.6, z: 0 },
   rotation: { x: 0, y: 0, z: 0 },
 }
 
 const defaultRight: ImageState = {
-  position: { x: 0, y: 1.6, z: 2.0 },
+  position: { x: 0, y: 1.6, z: 0 },
   rotation: { x: 0, y: 0, z: 0 },
 }
 
@@ -64,6 +66,11 @@ camera.setTarget(new Vector3(0, 1.6, 1.5))
 camera.attachControl(canvas, true)
 camera.layerMask = leftMask | rightMask | commonMask
 
+const leftPreviewCamera = new UniversalCamera('leftPreview', camera.position.clone(), scene)
+const rightPreviewCamera = new UniversalCamera('rightPreview', camera.position.clone(), scene)
+leftPreviewCamera.layerMask = leftMask | commonMask
+rightPreviewCamera.layerMask = rightMask | commonMask
+
 const light = new HemisphericLight('light', new Vector3(0, 1, 0), scene)
 light.intensity = 0.85
 
@@ -72,39 +79,69 @@ const rightPlane = MeshBuilder.CreatePlane('rightPlane', { size: 0.6 }, scene)
 leftPlane.layerMask = leftMask
 rightPlane.layerMask = rightMask
 
+const leftState = cloneState(defaultLeft)
+const rightState = cloneState(defaultRight)
+
+let xrCamera: Nullable<Camera> = null
+let headLockedInXr = true
+let showBothEyesInXr = true
+
 const leftMaterial = new StandardMaterial('leftMaterial', scene)
 const rightMaterial = new StandardMaterial('rightMaterial', scene)
 leftMaterial.disableLighting = true
 rightMaterial.disableLighting = true
 leftMaterial.emissiveColor = Color3.White()
 rightMaterial.emissiveColor = Color3.White()
+leftMaterial.backFaceCulling = false
+rightMaterial.backFaceCulling = false
+leftMaterial.alpha = 0.5
+rightMaterial.alpha = 0.5
 
 leftMaterial.diffuseTexture = createPlaceholderTexture(scene, 'LEFT', '#3ee78b')
 rightMaterial.diffuseTexture = createPlaceholderTexture(scene, 'RIGHT', '#ffb347')
 leftPlane.material = leftMaterial
 rightPlane.material = rightMaterial
 
-applyState(leftPlane, defaultLeft)
-applyState(rightPlane, defaultRight)
+applyState(leftPlane, leftState)
+applyState(rightPlane, rightState)
 
-const { setStatus, attachXRButtons } = buildUI(uiRoot)
+const { setStatus, attachXRButtons, setPreviewEnabled, onXrDebugChange } = buildUI(uiRoot)
 setStatus(engine.webGLVersion === 2 ? 'WebGL2 ready.' : 'WebGL2 not detected.')
 
+let previewEnabled = true
+setPreviewEnabled(previewEnabled)
+updatePreviewViewports()
+scene.activeCameras = previewEnabled ? [camera, leftPreviewCamera, rightPreviewCamera] : [camera]
+
 engine.runRenderLoop(() => {
+  if (previewEnabled) {
+    leftPreviewCamera.position.copyFrom(camera.position)
+    rightPreviewCamera.position.copyFrom(camera.position)
+    leftPreviewCamera.rotation.copyFrom(camera.rotation)
+    rightPreviewCamera.rotation.copyFrom(camera.rotation)
+  }
   scene.render()
 })
 
 window.addEventListener('resize', () => {
   engine.resize()
+  updatePreviewViewports()
 })
 
 scene
   .createDefaultXRExperienceAsync({
     disableDefaultUI: true,
+    disableTeleportation: true,
     optionalFeatures: true,
   })
   .then((xrHelper) => {
     attachXRButtons(xrHelper)
+
+    onXrDebugChange((nextHeadLocked, nextShowBoth) => {
+      headLockedInXr = nextHeadLocked
+      showBothEyesInXr = nextShowBoth
+      applyXrOverrides(xrHelper.baseExperience.state === WebXRState.IN_XR)
+    })
 
     xrHelper.baseExperience.onStateChangedObservable.add((state) => {
       if (state === WebXRState.IN_XR) {
@@ -112,11 +149,27 @@ scene
         if (rigCameras.length >= 2) {
           rigCameras[0].layerMask = leftMask | commonMask
           rigCameras[1].layerMask = rightMask | commonMask
+        } else if (xrHelper.baseExperience.camera) {
+          xrHelper.baseExperience.camera.layerMask = leftMask | rightMask | commonMask
         }
+        xrCamera = xrHelper.baseExperience.camera
+        previewEnabled = false
+        scene.activeCameras = null
+        setPreviewEnabled(previewEnabled)
+        leftMaterial.alpha = 1
+        rightMaterial.alpha = 1
+        applyXrOverrides(true)
         setStatus('In XR session.')
       }
 
       if (state === WebXRState.NOT_IN_XR) {
+        applyXrOverrides(false)
+        xrCamera = null
+        previewEnabled = true
+        scene.activeCameras = [camera, leftPreviewCamera, rightPreviewCamera]
+        setPreviewEnabled(previewEnabled)
+        leftMaterial.alpha = 0.5
+        rightMaterial.alpha = 0.5
         setStatus('XR session ended.')
       }
     })
@@ -186,6 +239,11 @@ function buildUI(root: HTMLDivElement) {
   status.textContent = 'Initializing...'
   root.appendChild(status)
 
+  const previewStatus = document.createElement('div')
+  previewStatus.className = 'status'
+  previewStatus.textContent = 'Desktop eye preview: enabled'
+  root.appendChild(previewStatus)
+
   const xrButtons = document.createElement('div')
   xrButtons.className = 'button-row'
 
@@ -203,9 +261,6 @@ function buildUI(root: HTMLDivElement) {
 
   const leftPanel = createPanel(root, 'Left Eye Image')
   const rightPanel = createPanel(root, 'Right Eye Image')
-
-  const leftState = cloneState(defaultLeft)
-  const rightState = cloneState(defaultRight)
 
   const leftBindings = buildControls(leftPanel, leftState, defaultLeft, (next) =>
     applyState(leftPlane, next),
@@ -228,13 +283,43 @@ function buildUI(root: HTMLDivElement) {
   const hint = document.createElement('div')
   hint.className = 'hint'
   hint.textContent =
-    'Use the sliders to align each image. Enter VR for headset view; changes apply live.'
+    'Use the sliders to align each image. Top-right mini windows show left (top) and right (bottom) eye previews.'
   root.appendChild(hint)
+
+  const debugTitle = document.createElement('div')
+  debugTitle.className = 'panel-title'
+  debugTitle.textContent = 'XR Debug'
+  root.appendChild(debugTitle)
+
+  const debugPanel = document.createElement('div')
+  debugPanel.className = 'panel'
+  root.appendChild(debugPanel)
+
+  let headLocked = true
+  let showBoth = true
+  const debugListeners: Array<(headLocked: boolean, showBoth: boolean) => void> = []
+
+  createToggleControl(debugPanel, 'Head-locked planes', headLocked, (next) => {
+    headLocked = next
+    debugListeners.forEach((handler) => handler(headLocked, showBoth))
+  })
+
+  createToggleControl(debugPanel, 'Show both eyes', showBoth, (next) => {
+    showBoth = next
+    debugListeners.forEach((handler) => handler(headLocked, showBoth))
+  })
 
   return {
     statusText: status,
     setStatus: (text: string) => {
       status.textContent = text
+    },
+    setPreviewEnabled: (enabled: boolean) => {
+      previewStatus.textContent = `Desktop eye preview: ${enabled ? 'enabled' : 'disabled'}`
+    },
+    onXrDebugChange: (handler: (headLocked: boolean, showBoth: boolean) => void) => {
+      debugListeners.push(handler)
+      handler(headLocked, showBoth)
     },
     attachXRButtons: (xrHelper: Awaited<ReturnType<Scene['createDefaultXRExperienceAsync']>>) => {
       let sessionActive = false
@@ -287,6 +372,65 @@ function buildUI(root: HTMLDivElement) {
   }
 }
 
+function applyXrOverrides(inXr: boolean) {
+  if (!inXr) {
+    leftPlane.layerMask = leftMask
+    rightPlane.layerMask = rightMask
+    leftPlane.parent = null
+    rightPlane.parent = null
+    applyState(leftPlane, leftState)
+    applyState(rightPlane, rightState)
+    return
+  }
+
+  if (showBothEyesInXr) {
+    const combinedMask = leftMask | rightMask | commonMask
+    leftPlane.layerMask = combinedMask
+    rightPlane.layerMask = combinedMask
+  } else {
+    leftPlane.layerMask = leftMask
+    rightPlane.layerMask = rightMask
+  }
+
+  if (headLockedInXr && xrCamera) {
+    leftPlane.parent = xrCamera
+    rightPlane.parent = xrCamera
+    leftPlane.position.set(0, 0, -2)
+    rightPlane.position.set(0, 0, -2)
+  } else {
+    leftPlane.parent = null
+    rightPlane.parent = null
+    applyState(leftPlane, leftState)
+    applyState(rightPlane, rightState)
+  }
+}
+
+function updatePreviewViewports() {
+  const width = engine.getRenderWidth()
+  const height = engine.getRenderHeight()
+  const aspect = width / height
+
+  const panelWidth = Math.min(0.28, 0.32 * (1 / aspect))
+  const panelHeight = panelWidth * 0.75
+  const margin = 0.02
+  const right = 1 - margin
+
+  leftPreviewCamera.viewport = new Viewport(
+    right - panelWidth,
+    1 - margin - panelHeight,
+    panelWidth,
+    panelHeight,
+  )
+  rightPreviewCamera.viewport = new Viewport(
+    right - panelWidth,
+    1 - margin - panelHeight * 2 - margin,
+    panelWidth,
+    panelHeight,
+  )
+
+  camera.viewport = new Viewport(0, 0, 1, 1)
+}
+
 function createPanel(root: HTMLElement, title: string) {
   const panelTitle = document.createElement('div')
   panelTitle.className = 'panel-title'
@@ -320,7 +464,7 @@ function buildControls(
     }),
   )
   controls.push(
-    createRangeControl(panel, 'Pos Z', 0.5, 4, 0.01, state.position.z, (value) => {
+    createRangeControl(panel, 'Pos Z', -4, 4, 0.01, state.position.z, (value) => {
       state.position.z = value
       onChange(state)
     }),
@@ -417,6 +561,32 @@ function createRangeControl(
       return toDegrees(state.rotation.z)
     },
   }
+}
+
+function createToggleControl(
+  panel: HTMLElement,
+  label: string,
+  value: boolean,
+  onChange: (next: boolean) => void,
+) {
+  const row = document.createElement('div')
+  row.className = 'control-row'
+  row.style.gridTemplateColumns = '1fr auto'
+
+  const text = document.createElement('div')
+  text.textContent = label
+
+  const input = document.createElement('input')
+  input.type = 'checkbox'
+  input.checked = value
+
+  input.addEventListener('change', () => {
+    onChange(input.checked)
+  })
+
+  row.appendChild(text)
+  row.appendChild(input)
+  panel.appendChild(row)
 }
 
 function createButton(label: string) {
