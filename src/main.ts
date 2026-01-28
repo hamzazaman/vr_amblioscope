@@ -30,6 +30,36 @@ type ImageState = {
   rotation: AxisGroup
 }
 
+type ImageSet = {
+  id: string
+  name: string
+  createLeftTexture: (scene: Scene) => DynamicTexture
+  createRightTexture: (scene: Scene) => DynamicTexture
+}
+
+const imageSets: ImageSet[] = [
+  {
+    id: 'grid',
+    name: 'Grid Pattern',
+    createLeftTexture: (scene) => createPlaceholderTexture(scene, 'LEFT', '#3ee78b'),
+    createRightTexture: (scene) => createPlaceholderTexture(scene, 'RIGHT', '#ffb347'),
+  },
+  {
+    id: 'car-garage',
+    name: 'Car & Garage',
+    createLeftTexture: (scene) => createCarTexture(scene),
+    createRightTexture: (scene) => createGarageTexture(scene),
+  },
+  {
+    id: 'bunny-flowers',
+    name: 'Bunny & Flowers',
+    createLeftTexture: (scene) => createBunnyWithFlowersTexture(scene),
+    createRightTexture: (scene) => createBunnyEmptyTexture(scene),
+  },
+]
+
+let currentImageSetId = 'car-garage'
+
 const leftMask = 0x10000000
 const rightMask = 0x20000000
 const commonMask = 0x0fffffff
@@ -118,6 +148,21 @@ function setImageSize(size: number) {
   rightPlane.scaling.setAll(size)
 }
 
+function setImageSet(setId: string) {
+  const imageSet = imageSets.find((s) => s.id === setId)
+  if (!imageSet) return
+
+  currentImageSetId = setId
+
+  // Dispose old textures
+  leftMaterial.diffuseTexture?.dispose()
+  rightMaterial.diffuseTexture?.dispose()
+
+  // Create new textures
+  leftMaterial.diffuseTexture = imageSet.createLeftTexture(scene)
+  rightMaterial.diffuseTexture = imageSet.createRightTexture(scene)
+}
+
 const hudPlane = MeshBuilder.CreatePlane('xrHud', { width: 1.4, height: 0.36 }, scene)
 hudPlane.layerMask = commonMask
 hudPlane.isVisible = false
@@ -151,6 +196,7 @@ let beforeCameraObserver: Nullable<Observer<Camera>> = null
 let xrRigCameras: Camera[] = []
 let lastControlSyncMs = 0
 let showControllers = false
+let showHudInVR = true
 const controllerMap = new Map<'left' | 'right', WebXRInputSource>()
 
 const leftMaterial = new StandardMaterial('leftMaterial', scene)
@@ -179,6 +225,7 @@ const {
   onRecenterXr,
   syncControls,
   onControllerVisibilityChange,
+  onHudVisibilityChange,
 } = buildUI(uiRoot)
 setStatus(engine.webGLVersion === 2 ? 'WebGL2 ready.' : 'WebGL2 not detected.')
 
@@ -259,6 +306,12 @@ scene
     onControllerVisibilityChange((visible) => {
       showControllers = visible
       updateControllerVisibility()
+    })
+
+    onHudVisibilityChange((visible) => {
+      if (inXrSession) {
+        hudPlane.isVisible = visible
+      }
     })
 
     xrHelper.baseExperience.onStateChangedObservable.add((state) => {
@@ -351,6 +404,482 @@ function createPlaceholderTexture(sceneRef: Scene, label: string, color: string)
   return texture
 }
 
+function createCarTexture(sceneRef: Scene) {
+  const texture = new DynamicTexture('tex-car', { width: 512, height: 512 }, sceneRef, false)
+  const ctx = texture.getContext() as CanvasRenderingContext2D
+
+  // White background
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, 512, 512)
+
+  // Draw a pink vintage car (similar to the reference image)
+  // Scale down and center to fit inside the garage opening
+  ctx.save()
+  ctx.translate(256, 330) // Center point - moved down to sit in middle of garage
+  ctx.scale(0.65, 0.65)   // Scale down to fit in garage
+  ctx.translate(-256, -290) // Translate back
+
+  const carColor = '#e8a0b0' // Pink/magenta color
+  const carOutline = '#c06080'
+  const windowColor = '#87ceeb' // Light blue for windows
+
+  // Car body - main shape
+  ctx.fillStyle = carColor
+  ctx.strokeStyle = carOutline
+  ctx.lineWidth = 3
+
+  // Main body (lower part)
+  ctx.beginPath()
+  ctx.moveTo(100, 320) // Bottom left
+  ctx.lineTo(100, 280) // Left side up
+  ctx.lineTo(120, 250) // Hood curve
+  ctx.lineTo(180, 240) // Hood top
+  ctx.lineTo(180, 200) // Windshield bottom
+  ctx.lineTo(220, 170) // Windshield top left
+  ctx.lineTo(300, 170) // Roof
+  ctx.lineTo(340, 200) // Rear window top
+  ctx.lineTo(340, 240) // Rear window bottom
+  ctx.lineTo(400, 250) // Trunk
+  ctx.lineTo(420, 280) // Right side
+  ctx.lineTo(420, 320) // Bottom right
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+
+  // Windows
+  ctx.fillStyle = windowColor
+  ctx.strokeStyle = carOutline
+  ctx.lineWidth = 2
+
+  // Front window
+  ctx.beginPath()
+  ctx.moveTo(190, 205)
+  ctx.lineTo(215, 180)
+  ctx.lineTo(255, 180)
+  ctx.lineTo(255, 205)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+
+  // Rear window
+  ctx.beginPath()
+  ctx.moveTo(265, 205)
+  ctx.lineTo(265, 180)
+  ctx.lineTo(305, 180)
+  ctx.lineTo(330, 205)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+
+  // Headlights
+  ctx.fillStyle = '#ffff99'
+  ctx.beginPath()
+  ctx.arc(130, 270, 12, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = carOutline
+  ctx.stroke()
+
+  // Taillights
+  ctx.fillStyle = '#ff4444'
+  ctx.beginPath()
+  ctx.arc(400, 270, 10, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = carOutline
+  ctx.stroke()
+
+  // Front wheel
+  ctx.fillStyle = '#333333'
+  ctx.beginPath()
+  ctx.arc(170, 320, 35, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#888888'
+  ctx.beginPath()
+  ctx.arc(170, 320, 20, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Rear wheel
+  ctx.fillStyle = '#333333'
+  ctx.beginPath()
+  ctx.arc(350, 320, 35, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#888888'
+  ctx.beginPath()
+  ctx.arc(350, 320, 20, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Chrome bumper details
+  ctx.strokeStyle = '#888888'
+  ctx.lineWidth = 4
+  ctx.beginPath()
+  ctx.moveTo(95, 300)
+  ctx.lineTo(95, 280)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(425, 300)
+  ctx.lineTo(425, 280)
+  ctx.stroke()
+
+  // Grille
+  ctx.fillStyle = '#666666'
+  ctx.fillRect(105, 255, 40, 25)
+  ctx.strokeStyle = '#888888'
+  ctx.lineWidth = 2
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath()
+    ctx.moveTo(110 + i * 10, 255)
+    ctx.lineTo(110 + i * 10, 280)
+    ctx.stroke()
+  }
+
+  ctx.restore()
+
+  texture.update()
+  return texture
+}
+
+function createGarageTexture(sceneRef: Scene) {
+  const texture = new DynamicTexture('tex-garage', { width: 512, height: 512 }, sceneRef, false)
+  const ctx = texture.getContext() as CanvasRenderingContext2D
+
+  // White background - keeps the interior white/open for the car to show through
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, 512, 512)
+
+  // Roof - yellow with peak
+  ctx.fillStyle = '#f0d000' // Bright yellow
+  ctx.strokeStyle = '#c0a000'
+  ctx.lineWidth = 3
+
+  // Roof shape (trapezoid with peak)
+  ctx.beginPath()
+  ctx.moveTo(60, 180)   // Left eave
+  ctx.lineTo(256, 80)   // Peak
+  ctx.lineTo(452, 180)  // Right eave
+  ctx.lineTo(420, 180)  // Right inner
+  ctx.lineTo(256, 100)  // Inner peak
+  ctx.lineTo(92, 180)   // Left inner
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+
+  // Small blue window/vent in the roof
+  ctx.fillStyle = '#4488cc'
+  ctx.strokeStyle = '#2266aa'
+  ctx.lineWidth = 2
+  ctx.fillRect(236, 110, 40, 30)
+  ctx.strokeRect(236, 110, 40, 30)
+
+  // Garage door frame - green
+  ctx.fillStyle = '#228822' // Green
+  ctx.strokeStyle = '#115511'
+  ctx.lineWidth = 4
+
+  // Left pillar
+  ctx.fillRect(92, 180, 30, 240)
+  ctx.strokeRect(92, 180, 30, 240)
+
+  // Right pillar
+  ctx.fillRect(390, 180, 30, 240)
+  ctx.strokeRect(390, 180, 30, 240)
+
+  // Top beam
+  ctx.fillRect(92, 180, 328, 25)
+  ctx.strokeRect(92, 180, 328, 25)
+
+  // Floor/threshold
+  ctx.fillStyle = '#228822'
+  ctx.fillRect(92, 400, 328, 20)
+  ctx.strokeRect(92, 400, 328, 20)
+
+  texture.update()
+  return texture
+}
+
+function drawBunnyBase(ctx: CanvasRenderingContext2D) {
+  // Colors
+  const bodyColor = '#f5deb3' // Tan/wheat color for bunny
+  const bodyOutline = '#8b7355'
+  const shirtColor = '#4a9fd4' // Blue shirt
+  const shirtOutline = '#2a6f9f'
+  const pantsColor = '#ff6b35' // Orange pants
+  const pantsOutline = '#cc4411'
+  const eyeColor = '#000000'
+  const noseColor = '#ffb6c1' // Pink nose
+
+  // Head
+  ctx.fillStyle = bodyColor
+  ctx.strokeStyle = bodyOutline
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.ellipse(256, 180, 35, 40, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+
+  // Ears
+  ctx.beginPath()
+  ctx.ellipse(235, 115, 12, 35, -0.2, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.ellipse(277, 115, 12, 35, 0.2, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+
+  // Inner ears (pink)
+  ctx.fillStyle = noseColor
+  ctx.beginPath()
+  ctx.ellipse(235, 115, 6, 20, -0.2, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.beginPath()
+  ctx.ellipse(277, 115, 6, 20, 0.2, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Eyes
+  ctx.fillStyle = eyeColor
+  ctx.beginPath()
+  ctx.arc(243, 175, 5, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.beginPath()
+  ctx.arc(269, 175, 5, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Nose
+  ctx.fillStyle = noseColor
+  ctx.beginPath()
+  ctx.ellipse(256, 195, 6, 4, 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Body/Shirt
+  ctx.fillStyle = shirtColor
+  ctx.strokeStyle = shirtOutline
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.ellipse(256, 270, 45, 55, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+
+  // Pants
+  ctx.fillStyle = pantsColor
+  ctx.strokeStyle = pantsOutline
+  ctx.beginPath()
+  ctx.ellipse(240, 340, 22, 30, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.ellipse(272, 340, 22, 30, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+
+  // Feet
+  ctx.fillStyle = bodyColor
+  ctx.strokeStyle = bodyOutline
+  ctx.beginPath()
+  ctx.ellipse(235, 385, 18, 10, -0.3, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.ellipse(277, 385, 18, 10, 0.3, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+}
+
+function drawBunnyArms(ctx: CanvasRenderingContext2D, holdingFlowers: boolean) {
+  const shirtColor = '#4a9fd4'
+  const shirtOutline = '#2a6f9f'
+  const bodyColor = '#f5deb3'
+  const bodyOutline = '#8b7355'
+
+  if (holdingFlowers) {
+    // Left arm extended forward holding flowers
+    ctx.fillStyle = shirtColor
+    ctx.strokeStyle = shirtOutline
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.ellipse(190, 260, 35, 14, -0.8, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+    // Left hand
+    ctx.fillStyle = bodyColor
+    ctx.strokeStyle = bodyOutline
+    ctx.beginPath()
+    ctx.arc(158, 245, 12, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+    // Right arm at side
+    ctx.fillStyle = shirtColor
+    ctx.strokeStyle = shirtOutline
+    ctx.beginPath()
+    ctx.ellipse(310, 280, 30, 12, 0.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+    // Right hand
+    ctx.fillStyle = bodyColor
+    ctx.strokeStyle = bodyOutline
+    ctx.beginPath()
+    ctx.arc(335, 295, 10, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+  } else {
+    // Left arm extended but empty
+    ctx.fillStyle = shirtColor
+    ctx.strokeStyle = shirtOutline
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.ellipse(190, 260, 35, 14, -0.8, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+    // Left hand (empty, open)
+    ctx.fillStyle = bodyColor
+    ctx.strokeStyle = bodyOutline
+    ctx.beginPath()
+    ctx.arc(158, 245, 12, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+    // Right arm at side
+    ctx.fillStyle = shirtColor
+    ctx.strokeStyle = shirtOutline
+    ctx.beginPath()
+    ctx.ellipse(310, 280, 30, 12, 0.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+
+    // Right hand
+    ctx.fillStyle = bodyColor
+    ctx.strokeStyle = bodyOutline
+    ctx.beginPath()
+    ctx.arc(335, 295, 10, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+  }
+}
+
+function drawFlowers(ctx: CanvasRenderingContext2D) {
+  // Stems
+  ctx.strokeStyle = '#228b22'
+  ctx.lineWidth = 3
+  ctx.beginPath()
+  ctx.moveTo(145, 245)
+  ctx.lineTo(130, 180)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(145, 245)
+  ctx.lineTo(155, 175)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(145, 245)
+  ctx.lineTo(120, 195)
+  ctx.stroke()
+
+  // Flower 1 - Yellow
+  ctx.fillStyle = '#ffd700'
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath()
+    const angle = (i * Math.PI * 2) / 5
+    ctx.ellipse(130 + Math.cos(angle) * 10, 170 + Math.sin(angle) * 10, 8, 5, angle, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.fillStyle = '#8b4513'
+  ctx.beginPath()
+  ctx.arc(130, 170, 6, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Flower 2 - Orange
+  ctx.fillStyle = '#ff8c00'
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath()
+    const angle = (i * Math.PI * 2) / 5 + 0.3
+    ctx.ellipse(155 + Math.cos(angle) * 10, 165 + Math.sin(angle) * 10, 8, 5, angle, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.fillStyle = '#8b4513'
+  ctx.beginPath()
+  ctx.arc(155, 165, 6, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Flower 3 - Red
+  ctx.fillStyle = '#ff4500'
+  for (let i = 0; i < 5; i++) {
+    ctx.beginPath()
+    const angle = (i * Math.PI * 2) / 5 + 0.6
+    ctx.ellipse(115 + Math.cos(angle) * 8, 190 + Math.sin(angle) * 8, 7, 4, angle, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.fillStyle = '#8b4513'
+  ctx.beginPath()
+  ctx.arc(115, 190, 5, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Leaves
+  ctx.fillStyle = '#32cd32'
+  ctx.beginPath()
+  ctx.ellipse(138, 220, 12, 6, -0.5, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.beginPath()
+  ctx.ellipse(152, 215, 10, 5, 0.5, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+function drawTail(ctx: CanvasRenderingContext2D) {
+  const bodyColor = '#f5deb3'
+  const bodyOutline = '#8b7355'
+
+  // Fluffy tail on the right side (back of bunny)
+  ctx.fillStyle = bodyColor
+  ctx.strokeStyle = bodyOutline
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.arc(320, 310, 18, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+
+  // Add some fluff detail
+  ctx.beginPath()
+  ctx.arc(328, 302, 10, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.beginPath()
+  ctx.arc(325, 318, 10, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+function createBunnyWithFlowersTexture(sceneRef: Scene) {
+  const texture = new DynamicTexture('tex-bunny-flowers', { width: 512, height: 512 }, sceneRef, false)
+  const ctx = texture.getContext() as CanvasRenderingContext2D
+
+  // White background
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, 512, 512)
+
+  drawBunnyBase(ctx)
+  drawBunnyArms(ctx, true)
+  drawFlowers(ctx)
+
+  texture.update()
+  return texture
+}
+
+function createBunnyEmptyTexture(sceneRef: Scene) {
+  const texture = new DynamicTexture('tex-bunny-empty', { width: 512, height: 512 }, sceneRef, false)
+  const ctx = texture.getContext() as CanvasRenderingContext2D
+
+  // White background
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, 512, 512)
+
+  drawTail(ctx)  // Draw tail first so it's behind the body
+  drawBunnyBase(ctx)
+  drawBunnyArms(ctx, false)
+  // No flowers drawn
+
+  texture.update()
+  return texture
+}
+
 function buildUI(root: HTMLDivElement) {
   root.innerHTML = ''
 
@@ -383,6 +912,11 @@ function buildUI(root: HTMLDivElement) {
   const divider = document.createElement('div')
   divider.className = 'divider'
   root.appendChild(divider)
+
+  const imageSetPanel = createPanel(root, 'Image Set')
+  createSelectControl(imageSetPanel, 'Images', imageSets.map((s) => ({ id: s.id, name: s.name })), currentImageSetId, (setId) => {
+    setImageSet(setId)
+  })
 
   const commonPanel = createPanel(root, 'Image Size')
   const sizeControl = createRangeControl(commonPanel, 'Size', 0.1, 1.5, 0.01, currentImageSize, (value) => {
@@ -428,6 +962,12 @@ function buildUI(root: HTMLDivElement) {
 
   let controllersVisible = false
   const controllerListeners: Array<(visible: boolean) => void> = []
+  const hudListeners: Array<(visible: boolean) => void> = []
+
+  createToggleControl(debugPanel, 'Show values in VR', showHudInVR, (next) => {
+    showHudInVR = next
+    hudListeners.forEach((handler) => handler(showHudInVR))
+  })
 
   createToggleControl(debugPanel, 'Show controllers', controllersVisible, (next) => {
     controllersVisible = next
@@ -459,6 +999,10 @@ function buildUI(root: HTMLDivElement) {
     onControllerVisibilityChange: (handler: (visible: boolean) => void) => {
       controllerListeners.push(handler)
       handler(controllersVisible)
+    },
+    onHudVisibilityChange: (handler: (visible: boolean) => void) => {
+      hudListeners.push(handler)
+      handler(showHudInVR)
     },
     syncControls: () => {
       leftBindings.sync(leftState)
@@ -546,7 +1090,7 @@ function applyXrOverrides(inXr: boolean) {
   if (xrCamera) {
     hudPlane.parent = xrCamera
     hudPlane.position.set(0, -0.8, 2.2)
-    hudPlane.isVisible = true
+    hudPlane.isVisible = showHudInVR
   }
 
   applyState(leftPlane, leftState)
@@ -593,8 +1137,8 @@ function disablePerEyeVisibility() {
 function updateJoystickMovement() {
   if (!inXrSession) return
   const deltaSeconds = engine.getDeltaTime() / 1000
-  const speed = 0.6
-  const rotSpeed = 0.3
+  const speed = 0.2
+  const rotSpeed = 0.15
   let didChange = false
 
   const leftSource = controllerMap.get('left')
@@ -914,6 +1458,42 @@ function createToggleControl(
 
   row.appendChild(text)
   row.appendChild(input)
+  panel.appendChild(row)
+}
+
+function createSelectControl(
+  panel: HTMLElement,
+  label: string,
+  options: Array<{ id: string; name: string }>,
+  value: string,
+  onChange: (next: string) => void,
+) {
+  const row = document.createElement('div')
+  row.className = 'control-row'
+  row.style.gridTemplateColumns = '1fr 2fr'
+
+  const text = document.createElement('div')
+  text.textContent = label
+
+  const select = document.createElement('select')
+  select.className = 'select-control'
+
+  options.forEach((option) => {
+    const opt = document.createElement('option')
+    opt.value = option.id
+    opt.textContent = option.name
+    if (option.id === value) {
+      opt.selected = true
+    }
+    select.appendChild(opt)
+  })
+
+  select.addEventListener('change', () => {
+    onChange(select.value)
+  })
+
+  row.appendChild(text)
+  row.appendChild(select)
   panel.appendChild(row)
 }
 

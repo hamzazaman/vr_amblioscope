@@ -80,6 +80,33 @@ body {
   flex-wrap: wrap;
 }
 
+.select-control {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #f0f4f8;
+  background: rgba(33, 43, 54, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease, border 0.2s ease;
+}
+
+.select-control:hover {
+  background: rgba(52, 68, 86, 0.9);
+}
+
+.select-control:focus {
+  outline: none;
+  border-color: rgba(62, 231, 139, 0.5);
+}
+
+.select-control option {
+  background: #1a2332;
+  color: #f0f4f8;
+}
+
 button {
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.15);
