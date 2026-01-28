@@ -14,7 +14,7 @@ import {
   Viewport,
   WebXRState,
 } from '@babylonjs/core'
-import type { Camera, Nullable } from '@babylonjs/core'
+import type { Camera, Nullable, Observer } from '@babylonjs/core'
 import '@babylonjs/loaders'
 
 type AxisGroup = {
@@ -83,8 +83,10 @@ const leftState = cloneState(defaultLeft)
 const rightState = cloneState(defaultRight)
 
 let xrCamera: Nullable<Camera> = null
-let headLockedInXr = true
-let showBothEyesInXr = true
+let headLockedInXr = false
+let showBothEyesInXr = false
+let inXrSession = false
+let beforeCameraObserver: Nullable<Observer<Camera>> = null
 
 const leftMaterial = new StandardMaterial('leftMaterial', scene)
 const rightMaterial = new StandardMaterial('rightMaterial', scene)
@@ -105,7 +107,14 @@ rightPlane.material = rightMaterial
 applyState(leftPlane, leftState)
 applyState(rightPlane, rightState)
 
-const { setStatus, attachXRButtons, setPreviewEnabled, onXrDebugChange } = buildUI(uiRoot)
+const {
+  setStatus,
+  attachXRButtons,
+  setPreviewEnabled,
+  onXrDebugChange,
+  onRecenterXr,
+  syncControls,
+} = buildUI(uiRoot)
 setStatus(engine.webGLVersion === 2 ? 'WebGL2 ready.' : 'WebGL2 not detected.')
 
 let previewEnabled = true
@@ -143,6 +152,14 @@ scene
       applyXrOverrides(xrHelper.baseExperience.state === WebXRState.IN_XR)
     })
 
+    onRecenterXr(() => {
+      if (xrHelper.baseExperience.state === WebXRState.IN_XR) {
+        recenterPlanesToXr()
+        syncStatesFromMeshes()
+        syncControls()
+      }
+    })
+
     xrHelper.baseExperience.onStateChangedObservable.add((state) => {
       if (state === WebXRState.IN_XR) {
         const rigCameras = xrHelper.baseExperience.camera?.rigCameras ?? []
@@ -153,16 +170,23 @@ scene
           xrHelper.baseExperience.camera.layerMask = leftMask | rightMask | commonMask
         }
         xrCamera = xrHelper.baseExperience.camera
+        inXrSession = true
         previewEnabled = false
         scene.activeCameras = null
         setPreviewEnabled(previewEnabled)
         leftMaterial.alpha = 1
         rightMaterial.alpha = 1
         applyXrOverrides(true)
+        if (!headLockedInXr) {
+          recenterPlanesToXr()
+          syncStatesFromMeshes()
+          syncControls()
+        }
         setStatus('In XR session.')
       }
 
       if (state === WebXRState.NOT_IN_XR) {
+        inXrSession = false
         applyXrOverrides(false)
         xrCamera = null
         previewEnabled = true
@@ -295,8 +319,8 @@ function buildUI(root: HTMLDivElement) {
   debugPanel.className = 'panel'
   root.appendChild(debugPanel)
 
-  let headLocked = true
-  let showBoth = true
+  let headLocked = false
+  let showBoth = false
   const debugListeners: Array<(headLocked: boolean, showBoth: boolean) => void> = []
 
   createToggleControl(debugPanel, 'Head-locked planes', headLocked, (next) => {
@@ -307,6 +331,17 @@ function buildUI(root: HTMLDivElement) {
   createToggleControl(debugPanel, 'Show both eyes', showBoth, (next) => {
     showBoth = next
     debugListeners.forEach((handler) => handler(headLocked, showBoth))
+  })
+
+  const recenterRow = document.createElement('div')
+  recenterRow.className = 'button-row'
+  const recenterButton = createButton('Recenter in XR')
+  recenterRow.appendChild(recenterButton)
+  debugPanel.appendChild(recenterRow)
+
+  const recenterListeners: Array<() => void> = []
+  recenterButton.addEventListener('click', () => {
+    recenterListeners.forEach((handler) => handler())
   })
 
   return {
@@ -320,6 +355,13 @@ function buildUI(root: HTMLDivElement) {
     onXrDebugChange: (handler: (headLocked: boolean, showBoth: boolean) => void) => {
       debugListeners.push(handler)
       handler(headLocked, showBoth)
+    },
+    onRecenterXr: (handler: () => void) => {
+      recenterListeners.push(handler)
+    },
+    syncControls: () => {
+      leftBindings.sync(leftState)
+      rightBindings.sync(rightState)
     },
     attachXRButtons: (xrHelper: Awaited<ReturnType<Scene['createDefaultXRExperienceAsync']>>) => {
       let sessionActive = false
@@ -376,6 +418,9 @@ function applyXrOverrides(inXr: boolean) {
   if (!inXr) {
     leftPlane.layerMask = leftMask
     rightPlane.layerMask = rightMask
+    leftPlane.isVisible = true
+    rightPlane.isVisible = true
+    disablePerEyeVisibility()
     leftPlane.parent = null
     rightPlane.parent = null
     applyState(leftPlane, leftState)
@@ -383,14 +428,9 @@ function applyXrOverrides(inXr: boolean) {
     return
   }
 
-  if (showBothEyesInXr) {
-    const combinedMask = leftMask | rightMask | commonMask
-    leftPlane.layerMask = combinedMask
-    rightPlane.layerMask = combinedMask
-  } else {
-    leftPlane.layerMask = leftMask
-    rightPlane.layerMask = rightMask
-  }
+  leftPlane.layerMask = commonMask
+  rightPlane.layerMask = commonMask
+  enablePerEyeVisibility()
 
   if (headLockedInXr && xrCamera) {
     leftPlane.parent = xrCamera
@@ -403,6 +443,74 @@ function applyXrOverrides(inXr: boolean) {
     applyState(leftPlane, leftState)
     applyState(rightPlane, rightState)
   }
+}
+
+function recenterPlanesToXr() {
+  if (!xrCamera) return
+  const forward = xrCamera.getForwardRay(2)
+  leftPlane.parent = null
+  rightPlane.parent = null
+  leftPlane.position.copyFrom(forward.origin.add(forward.direction.scale(2)))
+  rightPlane.position.copyFrom(forward.origin.add(forward.direction.scale(2)))
+  leftPlane.lookAt(xrCamera.position)
+  rightPlane.lookAt(xrCamera.position)
+}
+
+function syncStatesFromMeshes() {
+  leftState.position = {
+    x: leftPlane.position.x,
+    y: leftPlane.position.y,
+    z: leftPlane.position.z,
+  }
+  leftState.rotation = {
+    x: leftPlane.rotation.x,
+    y: leftPlane.rotation.y,
+    z: leftPlane.rotation.z,
+  }
+
+  rightState.position = {
+    x: rightPlane.position.x,
+    y: rightPlane.position.y,
+    z: rightPlane.position.z,
+  }
+  rightState.rotation = {
+    x: rightPlane.rotation.x,
+    y: rightPlane.rotation.y,
+    z: rightPlane.rotation.z,
+  }
+}
+
+function enablePerEyeVisibility() {
+  if (beforeCameraObserver) return
+  beforeCameraObserver = scene.onBeforeCameraRenderObservable.add((renderCamera) => {
+    if (!inXrSession) return
+    if (showBothEyesInXr) {
+      leftPlane.isVisible = true
+      rightPlane.isVisible = true
+      return
+    }
+
+    if (renderCamera.isLeftCamera) {
+      leftPlane.isVisible = true
+      rightPlane.isVisible = false
+      return
+    }
+
+    if (renderCamera.isRightCamera) {
+      leftPlane.isVisible = false
+      rightPlane.isVisible = true
+      return
+    }
+
+    leftPlane.isVisible = true
+    rightPlane.isVisible = true
+  })
+}
+
+function disablePerEyeVisibility() {
+  if (!beforeCameraObserver) return
+  scene.onBeforeCameraRenderObservable.remove(beforeCameraObserver)
+  beforeCameraObserver = null
 }
 
 function updatePreviewViewports() {
@@ -506,7 +614,11 @@ function buildControls(
     onChange(state)
   }
 
-  return { reset }
+  const sync = (next: ImageState) => {
+    controls.forEach((control) => control.setValue(control.getInitial(next)))
+  }
+
+  return { reset, sync }
 }
 
 function createRangeControl(
