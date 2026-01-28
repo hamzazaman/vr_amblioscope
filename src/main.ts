@@ -39,12 +39,6 @@ type ImageSet = {
 
 const imageSets: ImageSet[] = [
   {
-    id: 'grid',
-    name: 'Grid Pattern',
-    createLeftTexture: (scene) => createPlaceholderTexture(scene, 'LEFT', '#3ee78b'),
-    createRightTexture: (scene) => createPlaceholderTexture(scene, 'RIGHT', '#ffb347'),
-  },
-  {
     id: 'car-garage',
     name: 'Car & Garage',
     createLeftTexture: (scene) => createCarTexture(scene),
@@ -55,6 +49,18 @@ const imageSets: ImageSet[] = [
     name: 'Bunny & Flowers',
     createLeftTexture: (scene) => createBunnyWithFlowersTexture(scene),
     createRightTexture: (scene) => createBunnyEmptyTexture(scene),
+  },
+  {
+    id: 'stereopsis',
+    name: 'Stereopsis Test',
+    createLeftTexture: (scene) => createStereopsisLeftTexture(scene),
+    createRightTexture: (scene) => createStereopsisRightTexture(scene),
+  },
+  {
+    id: 'grid',
+    name: 'Grid Pattern',
+    createLeftTexture: (scene) => createPlaceholderTexture(scene, 'LEFT', '#3ee78b'),
+    createRightTexture: (scene) => createPlaceholderTexture(scene, 'RIGHT', '#ffb347'),
   },
 ]
 
@@ -210,8 +216,8 @@ rightMaterial.backFaceCulling = false
 leftMaterial.alpha = 0.5
 rightMaterial.alpha = 0.5
 
-leftMaterial.diffuseTexture = createPlaceholderTexture(scene, 'LEFT', '#3ee78b')
-rightMaterial.diffuseTexture = createPlaceholderTexture(scene, 'RIGHT', '#ffb347')
+leftMaterial.diffuseTexture = createCarTexture(scene)
+rightMaterial.diffuseTexture = createGarageTexture(scene)
 leftPlane.material = leftMaterial
 rightPlane.material = rightMaterial
 
@@ -875,6 +881,140 @@ function createBunnyEmptyTexture(sceneRef: Scene) {
   drawBunnyBase(ctx)
   drawBunnyArms(ctx, false)
   // No flowers drawn
+
+  texture.update()
+  return texture
+}
+
+function createStereopsisLeftTexture(sceneRef: Scene) {
+  const texture = new DynamicTexture('tex-stereo-left', { width: 512, height: 512 }, sceneRef, false)
+  const ctx = texture.getContext() as CanvasRenderingContext2D
+
+  // White background
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, 512, 512)
+
+  // Draw a frame/border
+  ctx.strokeStyle = '#333333'
+  ctx.lineWidth = 4
+  ctx.strokeRect(50, 50, 412, 412)
+
+  // Central fixation cross
+  ctx.strokeStyle = '#000000'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(246, 256)
+  ctx.lineTo(266, 256)
+  ctx.moveTo(256, 246)
+  ctx.lineTo(256, 266)
+  ctx.stroke()
+
+  // Row 1 - Circle that will appear "in front" (shifted right in left eye)
+  ctx.fillStyle = '#e74c3c' // Red
+  ctx.beginPath()
+  ctx.arc(156 + 8, 150, 25, 0, Math.PI * 2) // Shifted right
+  ctx.fill()
+
+  // Row 1 - Circle at screen depth (no shift)
+  ctx.fillStyle = '#3498db' // Blue
+  ctx.beginPath()
+  ctx.arc(256, 150, 25, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Row 1 - Circle that will appear "behind" (shifted left in left eye)
+  ctx.fillStyle = '#2ecc71' // Green
+  ctx.beginPath()
+  ctx.arc(356 - 8, 150, 25, 0, Math.PI * 2) // Shifted left
+  ctx.fill()
+
+  // Row 2 - Different depths
+  ctx.fillStyle = '#9b59b6' // Purple - far behind
+  ctx.beginPath()
+  ctx.arc(156 - 12, 280, 20, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.fillStyle = '#f39c12' // Orange - slightly in front
+  ctx.beginPath()
+  ctx.arc(356 + 5, 280, 20, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Row 3 - Small circles for fine stereopsis
+  ctx.fillStyle = '#1abc9c' // Teal
+  ctx.beginPath()
+  ctx.arc(206 + 3, 380, 15, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.fillStyle = '#e91e63' // Pink
+  ctx.beginPath()
+  ctx.arc(306 - 3, 380, 15, 0, Math.PI * 2)
+  ctx.fill()
+
+  texture.update()
+  return texture
+}
+
+function createStereopsisRightTexture(sceneRef: Scene) {
+  const texture = new DynamicTexture('tex-stereo-right', { width: 512, height: 512 }, sceneRef, false)
+  const ctx = texture.getContext() as CanvasRenderingContext2D
+
+  // White background
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, 512, 512)
+
+  // Draw a frame/border
+  ctx.strokeStyle = '#333333'
+  ctx.lineWidth = 4
+  ctx.strokeRect(50, 50, 412, 412)
+
+  // Central fixation cross
+  ctx.strokeStyle = '#000000'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(246, 256)
+  ctx.lineTo(266, 256)
+  ctx.moveTo(256, 246)
+  ctx.lineTo(256, 266)
+  ctx.stroke()
+
+  // Row 1 - Circle that will appear "in front" (shifted left in right eye)
+  ctx.fillStyle = '#e74c3c' // Red
+  ctx.beginPath()
+  ctx.arc(156 - 8, 150, 25, 0, Math.PI * 2) // Shifted left
+  ctx.fill()
+
+  // Row 1 - Circle at screen depth (no shift)
+  ctx.fillStyle = '#3498db' // Blue
+  ctx.beginPath()
+  ctx.arc(256, 150, 25, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Row 1 - Circle that will appear "behind" (shifted right in right eye)
+  ctx.fillStyle = '#2ecc71' // Green
+  ctx.beginPath()
+  ctx.arc(356 + 8, 150, 25, 0, Math.PI * 2) // Shifted right
+  ctx.fill()
+
+  // Row 2 - Different depths
+  ctx.fillStyle = '#9b59b6' // Purple - far behind
+  ctx.beginPath()
+  ctx.arc(156 + 12, 280, 20, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.fillStyle = '#f39c12' // Orange - slightly in front
+  ctx.beginPath()
+  ctx.arc(356 - 5, 280, 20, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Row 3 - Small circles for fine stereopsis
+  ctx.fillStyle = '#1abc9c' // Teal
+  ctx.beginPath()
+  ctx.arc(206 - 3, 380, 15, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.fillStyle = '#e91e63' // Pink
+  ctx.beginPath()
+  ctx.arc(306 + 3, 380, 15, 0, Math.PI * 2)
+  ctx.fill()
 
   texture.update()
   return texture
