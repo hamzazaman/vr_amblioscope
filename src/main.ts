@@ -47,6 +47,13 @@ const defaultRight: ImageState = {
 const toRadians = (deg: number) => (deg * Math.PI) / 180
 const toDegrees = (rad: number) => (rad * 180) / Math.PI
 
+// Viewing distance in meters (z position of planes)
+const viewingDistance = 2
+
+// Prism diopters = (displacement in cm) / (distance in m) = displacement * 100 / distance
+const metersToDiopters = (m: number) => (m * 100) / viewingDistance
+const dioptersToMeters = (d: number) => (d * viewingDistance) / 100
+
 const canvas = document.querySelector<HTMLCanvasElement>('#renderCanvas')
 const uiRoot = document.querySelector<HTMLDivElement>('#ui')
 
@@ -93,12 +100,23 @@ function createPreviewLabels() {
 const light = new HemisphericLight('light', new Vector3(0, 1, 0), scene)
 light.intensity = 0.85
 
-const leftPlane = MeshBuilder.CreatePlane('leftPlane', { size: 0.6 }, scene)
-const rightPlane = MeshBuilder.CreatePlane('rightPlane', { size: 0.6 }, scene)
+const defaultImageSize = 0.6
+let currentImageSize = defaultImageSize
+
+const leftPlane = MeshBuilder.CreatePlane('leftPlane', { size: 1 }, scene)
+const rightPlane = MeshBuilder.CreatePlane('rightPlane', { size: 1 }, scene)
+leftPlane.scaling.setAll(currentImageSize)
+rightPlane.scaling.setAll(currentImageSize)
 leftPlane.layerMask = leftMask
 rightPlane.layerMask = rightMask
 leftPlane.parent = camera
 rightPlane.parent = camera
+
+function setImageSize(size: number) {
+  currentImageSize = size
+  leftPlane.scaling.setAll(size)
+  rightPlane.scaling.setAll(size)
+}
 
 const hudPlane = MeshBuilder.CreatePlane('xrHud', { width: 1.4, height: 0.36 }, scene)
 hudPlane.layerMask = commonMask
@@ -366,6 +384,11 @@ function buildUI(root: HTMLDivElement) {
   divider.className = 'divider'
   root.appendChild(divider)
 
+  const commonPanel = createPanel(root, 'Image Size')
+  const sizeControl = createRangeControl(commonPanel, 'Size', 0.1, 1.5, 0.01, currentImageSize, (value) => {
+    setImageSize(value)
+  })
+
   const leftPanel = createPanel(root, 'Left Eye Image')
   const rightPanel = createPanel(root, 'Right Eye Image')
 
@@ -385,6 +408,7 @@ function buildUI(root: HTMLDivElement) {
   resetAll.addEventListener('click', () => {
     leftBindings.reset(defaultLeft)
     rightBindings.reset(defaultRight)
+    sizeControl.setValue(defaultImageSize)
   })
 
   const hint = document.createElement('div')
@@ -678,10 +702,10 @@ function updateXrHud() {
 }
 
 function formatState(state: ImageState) {
-  const x = state.position.x.toFixed(2)
-  const y = state.position.y.toFixed(2)
+  const h = metersToDiopters(state.position.x).toFixed(1)
+  const v = metersToDiopters(state.position.y).toFixed(1)
   const rot = toDegrees(state.rotation.z).toFixed(1)
-  return `X ${x}  Y ${y}  RZ ${rot}°`
+  return `H ${h}Δ  V ${v}Δ  R ${rot}°`
 }
 
 function isPressedAny(buttons: readonly GamepadButton[], indices: number[]) {
@@ -770,20 +794,23 @@ function buildControls(
 ) {
   const controls: Array<ReturnType<typeof createRangeControl>> = []
 
+  // Horizontal: -75Δ to +75Δ (corresponds to -1.5m to +1.5m at 2m distance)
   controls.push(
-    createRangeControl(panel, 'Pos X', -1.5, 1.5, 0.01, state.position.x, (value) => {
-      state.position.x = value
+    createRangeControl(panel, 'Horiz (Δ)', -75, 75, 0.5, metersToDiopters(state.position.x), (diopters) => {
+      state.position.x = dioptersToMeters(diopters)
       onChange(state)
     }),
   )
+  // Vertical: -75Δ to +75Δ
   controls.push(
-    createRangeControl(panel, 'Pos Y', -1.5, 1.5, 0.01, state.position.y, (value) => {
-      state.position.y = value
+    createRangeControl(panel, 'Vert (Δ)', -75, 75, 0.5, metersToDiopters(state.position.y), (diopters) => {
+      state.position.y = dioptersToMeters(diopters)
       onChange(state)
     }),
   )
+  // Rotation in degrees (cyclorotation)
   controls.push(
-    createRangeControl(panel, 'Rot Z', -90, 90, 0.5, toDegrees(state.rotation.z), (value) => {
+    createRangeControl(panel, 'Rot (°)', -90, 90, 0.5, toDegrees(state.rotation.z), (value) => {
       state.rotation.z = toRadians(value)
       onChange(state)
     }),
@@ -857,8 +884,8 @@ function createRangeControl(
       onChange(next)
     },
     getInitial: (state: ImageState) => {
-      if (label === 'Pos X') return state.position.x
-      if (label === 'Pos Y') return state.position.y
+      if (label === 'Horiz (Δ)') return metersToDiopters(state.position.x)
+      if (label === 'Vert (Δ)') return metersToDiopters(state.position.y)
       return toDegrees(state.rotation.z)
     },
   }
