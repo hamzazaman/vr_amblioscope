@@ -1,0 +1,132 @@
+:root {
+  font-family: "IBM Plex Sans", "Segoe UI", Tahoma, sans-serif;
+  color: #f3f3f3;
+  background: #0f1215;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: radial-gradient(circle at 20% 20%, #1c2631, #0b0e12 55%, #07090c 100%);
+}
+
+#renderCanvas {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  touch-action: none;
+}
+
+#ui {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: min(360px, 92vw);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 14px;
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  background: rgba(10, 14, 18, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.45);
+}
+
+.panel-title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 6px 0 10px;
+}
+
+.panel {
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(20, 26, 34, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  margin-bottom: 12px;
+}
+
+.control-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 52px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.control-row input[type="range"] {
+  width: 100%;
+}
+
+.value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f0f4f8;
+  background: rgba(33, 43, 54, 0.8);
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.2s ease, border 0.2s ease;
+}
+
+button:hover {
+  background: rgba(52, 68, 86, 0.9);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+.status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 12px 0;
+}
+
+.hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  #ui {
+    left: 8px;
+    top: 8px;
+    padding: 10px;
+  }
+
+  .control-row {
+    grid-template-columns: 64px 1fr 48px;
+  }
+}
