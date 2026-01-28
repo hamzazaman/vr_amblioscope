@@ -33,12 +33,12 @@ const rightMask = 0x20000000
 const commonMask = 0x0fffffff
 
 const defaultLeft: ImageState = {
-  position: { x: 0, y: 1.6, z: 0 },
+  position: { x: 0, y: 0, z: 2 },
   rotation: { x: 0, y: 0, z: 0 },
 }
 
 const defaultRight: ImageState = {
-  position: { x: 0, y: 1.6, z: 0 },
+  position: { x: 0, y: 0, z: 2 },
   rotation: { x: 0, y: 0, z: 0 },
 }
 
@@ -83,10 +83,11 @@ const leftState = cloneState(defaultLeft)
 const rightState = cloneState(defaultRight)
 
 let xrCamera: Nullable<Camera> = null
-let headLockedInXr = false
 let showBothEyesInXr = false
 let inXrSession = false
 let beforeCameraObserver: Nullable<Observer<Camera>> = null
+let xrRigCameras: Camera[] = []
+let lastControlSyncMs = 0
 const controllerMap = new Map<'left' | 'right', WebXRInputSource>()
 
 const leftMaterial = new StandardMaterial('leftMaterial', scene)
@@ -160,16 +161,14 @@ scene
       controllerMap.delete(handedness)
     })
 
-    onXrDebugChange((nextHeadLocked, nextShowBoth) => {
-      headLockedInXr = nextHeadLocked
+    onXrDebugChange((nextShowBoth) => {
       showBothEyesInXr = nextShowBoth
       applyXrOverrides(xrHelper.baseExperience.state === WebXRState.IN_XR)
     })
 
     onRecenterXr(() => {
       if (xrHelper.baseExperience.state === WebXRState.IN_XR) {
-        recenterPlanesToXr()
-        syncStatesFromMeshes()
+        resetHeadLockedPlanes()
         syncControls()
       }
     })
@@ -177,6 +176,7 @@ scene
     xrHelper.baseExperience.onStateChangedObservable.add((state) => {
       if (state === WebXRState.IN_XR) {
         const rigCameras = xrHelper.baseExperience.camera?.rigCameras ?? []
+        xrRigCameras = rigCameras
         if (rigCameras.length >= 2) {
           rigCameras[0].layerMask = leftMask | commonMask
           rigCameras[1].layerMask = rightMask | commonMask
@@ -191,16 +191,13 @@ scene
         leftMaterial.alpha = 1
         rightMaterial.alpha = 1
         applyXrOverrides(true)
-        if (!headLockedInXr) {
-          recenterPlanesToXr()
-          syncStatesFromMeshes()
-          syncControls()
-        }
+        syncControls()
         setStatus('In XR session.')
       }
 
       if (state === WebXRState.NOT_IN_XR) {
         inXrSession = false
+        xrRigCameras = []
         applyXrOverrides(false)
         xrCamera = null
         previewEnabled = true
@@ -333,18 +330,12 @@ function buildUI(root: HTMLDivElement) {
   debugPanel.className = 'panel'
   root.appendChild(debugPanel)
 
-  let headLocked = false
   let showBoth = false
-  const debugListeners: Array<(headLocked: boolean, showBoth: boolean) => void> = []
-
-  createToggleControl(debugPanel, 'Head-locked planes', headLocked, (next) => {
-    headLocked = next
-    debugListeners.forEach((handler) => handler(headLocked, showBoth))
-  })
+  const debugListeners: Array<(showBoth: boolean) => void> = []
 
   createToggleControl(debugPanel, 'Show both eyes', showBoth, (next) => {
     showBoth = next
-    debugListeners.forEach((handler) => handler(headLocked, showBoth))
+    debugListeners.forEach((handler) => handler(showBoth))
   })
 
   const recenterRow = document.createElement('div')
@@ -366,9 +357,9 @@ function buildUI(root: HTMLDivElement) {
     setPreviewEnabled: (enabled: boolean) => {
       previewStatus.textContent = `Desktop eye preview: ${enabled ? 'enabled' : 'disabled'}`
     },
-    onXrDebugChange: (handler: (headLocked: boolean, showBoth: boolean) => void) => {
+    onXrDebugChange: (handler: (showBoth: boolean) => void) => {
       debugListeners.push(handler)
-      handler(headLocked, showBoth)
+      handler(showBoth)
     },
     onRecenterXr: (handler: () => void) => {
       recenterListeners.push(handler)
@@ -435,8 +426,8 @@ function applyXrOverrides(inXr: boolean) {
     leftPlane.isVisible = true
     rightPlane.isVisible = true
     disablePerEyeVisibility()
-    leftPlane.parent = null
-    rightPlane.parent = null
+    leftPlane.parent = camera
+    rightPlane.parent = camera
     applyState(leftPlane, leftState)
     applyState(rightPlane, rightState)
     return
@@ -446,52 +437,25 @@ function applyXrOverrides(inXr: boolean) {
   rightPlane.layerMask = commonMask
   enablePerEyeVisibility()
 
-  if (headLockedInXr && xrCamera) {
+  if (xrRigCameras.length >= 2) {
+    leftPlane.parent = xrRigCameras[0]
+    rightPlane.parent = xrRigCameras[1]
+  } else if (xrCamera) {
     leftPlane.parent = xrCamera
     rightPlane.parent = xrCamera
-    leftPlane.position.set(0, 0, -2)
-    rightPlane.position.set(0, 0, -2)
-  } else {
-    leftPlane.parent = null
-    rightPlane.parent = null
-    applyState(leftPlane, leftState)
-    applyState(rightPlane, rightState)
   }
+
+  applyState(leftPlane, leftState)
+  applyState(rightPlane, rightState)
 }
 
-function recenterPlanesToXr() {
-  if (!xrCamera) return
-  const forward = xrCamera.getForwardRay(2)
-  leftPlane.parent = null
-  rightPlane.parent = null
-  leftPlane.position.copyFrom(forward.origin.add(forward.direction.scale(2)))
-  rightPlane.position.copyFrom(forward.origin.add(forward.direction.scale(2)))
-  leftPlane.lookAt(xrCamera.position)
-  rightPlane.lookAt(xrCamera.position)
-}
-
-function syncStatesFromMeshes() {
-  leftState.position = {
-    x: leftPlane.position.x,
-    y: leftPlane.position.y,
-    z: leftPlane.position.z,
-  }
-  leftState.rotation = {
-    x: leftPlane.rotation.x,
-    y: leftPlane.rotation.y,
-    z: leftPlane.rotation.z,
-  }
-
-  rightState.position = {
-    x: rightPlane.position.x,
-    y: rightPlane.position.y,
-    z: rightPlane.position.z,
-  }
-  rightState.rotation = {
-    x: rightPlane.rotation.x,
-    y: rightPlane.rotation.y,
-    z: rightPlane.rotation.z,
-  }
+function resetHeadLockedPlanes() {
+  leftState.position = { ...defaultLeft.position }
+  leftState.rotation = { ...defaultLeft.rotation }
+  rightState.position = { ...defaultRight.position }
+  rightState.rotation = { ...defaultRight.rotation }
+  applyState(leftPlane, leftState)
+  applyState(rightPlane, rightState)
 }
 
 function enablePerEyeVisibility() {
@@ -528,10 +492,11 @@ function disablePerEyeVisibility() {
 }
 
 function updateJoystickMovement() {
-  if (!inXrSession || headLockedInXr) return
+  if (!inXrSession) return
   const deltaSeconds = engine.getDeltaTime() / 1000
   const speed = 0.6
-  const rotSpeed = 1.6
+  const rotSpeed = 0.3
+  let didChange = false
 
   const leftSource = controllerMap.get('left')
   const rightSource = controllerMap.get('right')
@@ -544,10 +509,12 @@ function updateJoystickMovement() {
     if (xButton?.pressed) {
       leftState.rotation.z -= rotSpeed * deltaSeconds
       applyState(leftPlane, leftState)
+      didChange = true
     }
     if (yButton?.pressed) {
       leftState.rotation.z += rotSpeed * deltaSeconds
       applyState(leftPlane, leftState)
+      didChange = true
     }
   }
 
@@ -557,16 +524,19 @@ function updateJoystickMovement() {
       leftState.position.x += x * speed * deltaSeconds
       leftState.position.y += -y * speed * deltaSeconds
       applyState(leftPlane, leftState)
+      didChange = true
     }
 
     const leftButtons = leftSource.inputSource.gamepad.buttons
     if (isPressedAny(leftButtons, [2, 0])) {
       leftState.rotation.z -= rotSpeed * deltaSeconds
       applyState(leftPlane, leftState)
+      didChange = true
     }
     if (isPressedAny(leftButtons, [3, 1])) {
       leftState.rotation.z += rotSpeed * deltaSeconds
       applyState(leftPlane, leftState)
+      didChange = true
     }
   }
 
@@ -578,10 +548,12 @@ function updateJoystickMovement() {
     if (aButton?.pressed) {
       rightState.rotation.z -= rotSpeed * deltaSeconds
       applyState(rightPlane, rightState)
+      didChange = true
     }
     if (bButton?.pressed) {
       rightState.rotation.z += rotSpeed * deltaSeconds
       applyState(rightPlane, rightState)
+      didChange = true
     }
   }
 
@@ -591,16 +563,27 @@ function updateJoystickMovement() {
       rightState.position.x += x * speed * deltaSeconds
       rightState.position.y += -y * speed * deltaSeconds
       applyState(rightPlane, rightState)
+      didChange = true
     }
 
     const rightButtons = rightSource.inputSource.gamepad.buttons
     if (isPressedAny(rightButtons, [0, 2])) {
       rightState.rotation.z -= rotSpeed * deltaSeconds
       applyState(rightPlane, rightState)
+      didChange = true
     }
     if (isPressedAny(rightButtons, [1, 3])) {
       rightState.rotation.z += rotSpeed * deltaSeconds
       applyState(rightPlane, rightState)
+      didChange = true
+    }
+  }
+
+  if (didChange) {
+    const now = performance.now()
+    if (now - lastControlSyncMs > 100) {
+      syncControls()
+      lastControlSyncMs = now
     }
   }
 }
@@ -673,7 +656,7 @@ function buildControls(
     }),
   )
   controls.push(
-    createRangeControl(panel, 'Pos Y', 0.5, 2.5, 0.01, state.position.y, (value) => {
+    createRangeControl(panel, 'Pos Y', -1.5, 1.5, 0.01, state.position.y, (value) => {
       state.position.y = value
       onChange(state)
     }),
